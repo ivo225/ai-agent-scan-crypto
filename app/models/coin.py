@@ -82,8 +82,9 @@ class CoinReportSchema(BaseModel):
     fear_greed_classification: Optional[str] = None
     market_cap_change_24h: Optional[float] = None
     btc_dominance: Optional[float] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    # Let the database handle the default timestamp generation
+    timestamp: Optional[datetime] = Field(None, description="Timestamp of report creation (set by DB)")
 
     class Config:
-        # orm_mode = True
+        # orm_mode = True # Pydantic V1
         from_attributes = True # For Pydantic V2
