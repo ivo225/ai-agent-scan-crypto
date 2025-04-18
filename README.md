@@ -92,13 +92,51 @@ When the server is running, the API will be available at `http://localhost:8000`
 
 ## Usage
 
-### Interactive CLI
+### Command Line Interface (CLI)
 
-When running `python -m app.cli`:
-*   Type `/analyze <symbol_or_id>` (e.g., `/analyze bitcoin` or `/analyze btc`) to get an analysis report.
-*   Type any other message to chat with the AI (using DeepSeek by default).
-*   Type `/exit` or `/quit` to stop.
-*   Use `python -m app.cli --help` to see other available CLI commands (like `setup-db`, `cache-stats`).
+The application provides a command-line interface for direct interaction and management tasks. Ensure your virtual environment is active before running these commands.
+
+*   **Start Interactive Chat (Default):**
+    ```bash
+    python -m app.cli
+    ```
+    *   Starts an interactive session.
+    *   Use `/analyze <symbol_or_id>` (e.g., `/analyze bitcoin` or `/analyze btc`) to get a detailed analysis of a cryptocurrency.
+    *   Use `/exit` or `/quit` to end the session.
+    *   Any other input is treated as a chat message for the AI.
+
+*   **Database Setup:**
+    ```bash
+    python -m app.cli setup-db
+    ```
+    *   Initializes the database schema. **Warning:** This might drop existing tables if they exist.
+
+*   **Cache Management:**
+    *   Show statistics:
+        ```bash
+        python -m app.cli cache-stats
+        ```
+    *   Clear all caches:
+        ```bash
+        python -m app.cli cache-clear
+        ```
+    *   Clear a specific namespace:
+        ```bash
+        python -m app.cli cache-clear <namespace>
+        ```
+        *(Example: `python -m app.cli cache-clear coingecko`)*
+    *   Set TTL for a namespace:
+        ```bash
+        python -m app.cli cache-ttl <namespace> <seconds>
+        ```
+        *(Example: `python -m app.cli cache-ttl coingecko 3600`)*
+
+*   **Help:**
+    ```bash
+    python -m app.cli --help
+    ```
+    *   Displays a summary of all available commands.
+
 
 ### API (When running Uvicorn)
 
