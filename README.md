@@ -1,6 +1,6 @@
 # Crypto Analyzer API
 
-This project provides a FastAPI-based API for analyzing cryptocurrency data using various sources like CoinGecko, CryptoPanic, DeepSeek AI, and technical indicators. It includes a chat interface for interacting with the analysis features.
+This project provides a FastAPI-based API for analyzing cryptocurrency data using various sources like CoinGecko, CryptoPanic, DeepSeek AI, Perplexity AI, Binance (for market data), Helius (for Solana data), and technical indicators. It includes a chat interface for interacting with the analysis features.
 
 ## Prerequisites
 
@@ -43,12 +43,13 @@ This project provides a FastAPI-based API for analyzing cryptocurrency data usin
 
 2.  **Edit the `.env` file:**
     Open the `.env` file in a text editor and add your API keys. You **must** provide keys for:
-    *   `CRYPTO_PANIC_API_KEY`: Get from [CryptoPanic API](https://cryptopanic.com/developers/api/)
-    *   `DEEPSEEK_API_KEY`: Get from [DeepSeek Platform](https://platform.deepseek.com/)
-    *   `BINANCE_API_KEY` & `BINANCE_SECRET_KEY`: Get from your [Binance Account](https://www.binance.com/en/my/settings/api-management) (ensure API restrictions are set appropriately if used for trading features later).
+    *   `CRYPTO_PANIC_API_KEY`: Get from [CryptoPanic API](https://cryptopanic.com/developers/api/) (for news sentiment)
+    *   `DEEPSEEK_API_KEY`: Get from [DeepSeek Platform](https://platform.deepseek.com/) (for AI-driven analysis/chat)
+    *   `PERPLEXITY_API_KEY`: Get from [Perplexity Labs](https://docs.perplexity.ai/docs/getting-started) (for alternative AI analysis/chat)
+    *   `BINANCE_API_KEY` & `BINANCE_SECRET_KEY`: Get from your [Binance Account](https://www.binance.com/en/my/settings/api-management) (for market data like price, volume, klines)
+    *   `HELIUS_API_KEY`: Get from [Helius](https://helius.dev/) (for Solana-specific on-chain data)
 
-    Optionally, you can add:
-    *   `HELIUS_API_KEY`: Get from [Helius](https://helius.dev/) (for Solana-specific data, if features are added).
+    *Note: CoinGecko API is used for general coin information and market data and does not require an API key for the free tier.*
 
     The `DATABASE_URL` defaults to a local SQLite file (`sqlite+aiosqlite:///./crypto_analysis.db`) and usually doesn't need changing for local use.
 
