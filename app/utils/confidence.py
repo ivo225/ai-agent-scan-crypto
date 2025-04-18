@@ -160,16 +160,18 @@ def generate_trading_signal(confidence_score: int, direction: str, price: Option
 def calculate_confidence_score(
     tech_indicators: Dict[str, Optional[float]],
     price: Optional[float], # Allow price to be None
-    market_context: Optional[Dict[str, Any]] = None # Add market context parameter
+    market_context: Optional[Dict[str, Any]] = None, # Add market context parameter
+    twitter_sentiment: Optional[Dict[str, Any]] = None # Add Twitter sentiment parameter
 ) -> Dict[str, any]:
     """
-    Calculate a confidence score (0-100) for predictions based on technical indicators
-    and adjusted by broader market context.
+    Calculate a confidence score (0-100) for predictions based on technical indicators,
+    broader market context, and Twitter sentiment analysis.
 
     Args:
         tech_indicators: Dictionary of technical indicator values.
         price: Current price of the asset. Can be None if unavailable.
         market_context: Optional dictionary containing 'global_market' and 'fear_greed' data.
+        twitter_sentiment: Optional dictionary containing Twitter sentiment data from Perplexity.
 
     Returns:
         Dictionary containing:
@@ -454,29 +456,34 @@ def calculate_confidence_score(
     agreement_score = agreement_ratio * 10 # Max 10 points for agreement
 
     # Final score calculation (weighted sum of components + agreement)
-    # Weights can be adjusted based on perceived importance
+    # Weights adjusted to increase market context importance
     overall_score = (
-        scores.get('rsi', 0) * 0.10 +          # RSI contribution (10%) - Reduced from 15%
-        scores.get('macd', 0) * 0.10 +         # MACD contribution (10%) - Reduced from 15%
-        scores.get('bb', 0) * 0.10 +           # Bollinger Bands contribution (10%)
-        scores.get('sma', 0) * 0.10 +          # SMA contribution (10%)
-        scores.get('adx', 0) * 0.15 +          # ADX contribution (15%) - Reduced from 20%
-        scores.get('ema', 0) * 0.15 +          # EMA contribution (15%) - Reduced from 20%
-        scores.get('market_context', 0) * 0.20 + # Market context contribution (20%) - NEW
+        scores.get('rsi', 0) * 0.08 +          # RSI contribution (8%) - Reduced from 10%
+        scores.get('macd', 0) * 0.08 +         # MACD contribution (8%) - Reduced from 10%
+        scores.get('bb', 0) * 0.08 +           # Bollinger Bands contribution (8%) - Reduced from 10%
+        scores.get('sma', 0) * 0.08 +          # SMA contribution (8%) - Reduced from 10%
+        scores.get('adx', 0) * 0.08 +          # ADX contribution (8%) - Reduced from 10%
+        scores.get('ema', 0) * 0.08 +          # EMA contribution (8%) - Reduced from 10%
+        scores.get('market_context', 0) * 0.25 + # Market context contribution (25%) - Increased from 15%
+        scores.get('twitter_sentiment', 0) * 0.15 + # Twitter sentiment contribution (15%)
         scores.get('data_quality', 0) * 0.10 + # Data quality contribution (10%)
         agreement_score * 1.0                  # Agreement contribution (added on top)
     )
 
-    # --- Market Context Analysis ---
-    # Calculate a separate market context score (0-20 points)
+    # --- Enhanced Market Context Analysis ---
+    # Calculate a comprehensive market context score (0-30 points)
     market_score = 0
     context_notes = []
     context_adjustment = 0
 
     if market_context:
         try:
+            # Extract all market context components
             fear_greed = market_context.get('fear_greed')
+            fear_greed_trend = market_context.get('fear_greed_trend')
             global_market = market_context.get('global_market')
+            market_volatility = market_context.get('market_volatility')
+            btc_dominance_data = market_context.get('btc_dominance')
 
             # --- Fear & Greed Index Analysis (0-10 points) ---
             if fear_greed and fear_greed.get('value'):
@@ -487,7 +494,7 @@ def calculate_confidence_score(
                 if direction == 'bullish':
                     if fg_value > 75: # Extreme Greed vs Bullish signal
                         market_score += 0  # No points (conflict)
-                        context_adjustment -= 10  # Increased from 5
+                        context_adjustment -= 10
                         context_notes.append(f"Extreme Greed ({fg_value}) conflicts with bullish signal")
                     elif fg_value > 60: # Greed vs Bullish signal
                         market_score += 2
@@ -495,7 +502,7 @@ def calculate_confidence_score(
                         context_notes.append(f"Greed ({fg_value}) slightly conflicts with bullish signal")
                     elif fg_value < 25: # Extreme Fear vs Bullish signal (Contrarian)
                         market_score += 10  # Maximum points
-                        context_adjustment += 10  # Increased from 5
+                        context_adjustment += 10
                         context_notes.append(f"Extreme Fear ({fg_value}) strongly supports bullish signal (contrarian)")
                     elif fg_value < 40: # Fear vs Bullish signal (Contrarian)
                         market_score += 7
@@ -508,7 +515,7 @@ def calculate_confidence_score(
                 elif direction == 'bearish':
                     if fg_value > 75: # Extreme Greed vs Bearish signal
                         market_score += 10  # Maximum points
-                        context_adjustment += 10  # Increased from 5
+                        context_adjustment += 10
                         context_notes.append(f"Extreme Greed ({fg_value}) strongly supports bearish signal")
                     elif fg_value > 60: # Greed vs Bearish signal
                         market_score += 7
@@ -516,7 +523,7 @@ def calculate_confidence_score(
                         context_notes.append(f"Greed ({fg_value}) supports bearish signal")
                     elif fg_value < 25: # Extreme Fear vs Bearish signal (Contrarian)
                         market_score += 0  # No points (conflict)
-                        context_adjustment -= 10  # Increased from 5
+                        context_adjustment -= 10
                         context_notes.append(f"Extreme Fear ({fg_value}) conflicts with bearish signal (contrarian)")
                     elif fg_value < 40: # Fear vs Bearish signal (Contrarian)
                         market_score += 2
@@ -534,6 +541,67 @@ def calculate_confidence_score(
                         market_score += 3
                         context_notes.append(f"Neutral market sentiment ({fg_value}) aligns with neutral technical signals")
 
+            # --- Fear & Greed Trend Analysis (0-5 points) ---
+            if fear_greed_trend:
+                trend = fear_greed_trend.get('trend')
+                trend_direction = fear_greed_trend.get('trend_direction')
+                avg_value = fear_greed_trend.get('avg_value')
+
+                # Add trend information to context notes
+                context_notes.append(f"F&G trend: {trend} ({avg_value}, {trend_direction})")
+
+                # Score based on trend direction and alignment with predicted direction
+                if direction == 'bullish':
+                    if trend == 'extreme_fear' or trend == 'fear':
+                        # Contrarian bullish signal
+                        if trend_direction in ['increasing', 'strongly_increasing']:
+                            # Fear increasing = potential bottoming (very bullish contrarian)
+                            market_score += 5
+                            context_adjustment += 5
+                            context_notes.append("Fear increasing - potential bottoming pattern (bullish)")
+                        else:
+                            # Fear stable/decreasing = still contrarian bullish
+                            market_score += 3
+                            context_adjustment += 3
+                            context_notes.append("Fear stable/decreasing - contrarian bullish signal")
+                    elif trend == 'extreme_greed' or trend == 'greed':
+                        # Conflicting with bullish signal
+                        if trend_direction in ['increasing', 'strongly_increasing']:
+                            # Greed increasing = potential topping (bearish)
+                            market_score += 0
+                            context_adjustment -= 5
+                            context_notes.append("Greed increasing - potential topping pattern (bearish)")
+                        else:
+                            # Greed stable/decreasing = less bearish
+                            market_score += 1
+                            context_adjustment -= 2
+                            context_notes.append("Greed stable/decreasing - slightly bearish signal")
+                elif direction == 'bearish':
+                    if trend == 'extreme_greed' or trend == 'greed':
+                        # Confirming bearish signal
+                        if trend_direction in ['increasing', 'strongly_increasing']:
+                            # Greed increasing = potential topping (very bearish)
+                            market_score += 5
+                            context_adjustment += 5
+                            context_notes.append("Greed increasing - potential topping pattern (bearish)")
+                        else:
+                            # Greed stable/decreasing = still bearish
+                            market_score += 3
+                            context_adjustment += 3
+                            context_notes.append("Greed stable/decreasing - bearish signal")
+                    elif trend == 'extreme_fear' or trend == 'fear':
+                        # Conflicting with bearish signal
+                        if trend_direction in ['decreasing', 'strongly_decreasing']:
+                            # Fear decreasing = potential bottoming (bullish)
+                            market_score += 0
+                            context_adjustment -= 5
+                            context_notes.append("Fear decreasing - potential bottoming pattern (bullish)")
+                        else:
+                            # Fear stable/increasing = less bullish
+                            market_score += 1
+                            context_adjustment -= 2
+                            context_notes.append("Fear stable/increasing - slightly bullish signal")
+
             # --- Market Trend Analysis (0-10 points) ---
             if global_market and global_market.get('market_cap_change_percentage_24h_usd') is not None:
                 mkt_cap_change = global_market.get('market_cap_change_percentage_24h_usd')
@@ -542,7 +610,7 @@ def calculate_confidence_score(
                 if direction == 'bullish':
                     if mkt_cap_change < -5.0: # Strong market down vs Bullish signal
                         market_score += 0  # No points (strong conflict)
-                        context_adjustment -= 10  # Increased from 5
+                        context_adjustment -= 10
                         context_notes.append(f"Strong market down ({mkt_cap_change:.2f}%) conflicts with bullish signal")
                     elif mkt_cap_change < -2.0: # Moderate market down vs Bullish signal
                         market_score += 2
@@ -550,7 +618,7 @@ def calculate_confidence_score(
                         context_notes.append(f"Market down ({mkt_cap_change:.2f}%) conflicts with bullish signal")
                     elif mkt_cap_change > 5.0: # Strong market up vs Bullish signal
                         market_score += 10  # Maximum points
-                        context_adjustment += 10  # Increased from 5
+                        context_adjustment += 10
                         context_notes.append(f"Strong market up ({mkt_cap_change:.2f}%) strongly supports bullish signal")
                     elif mkt_cap_change > 2.0: # Moderate market up vs Bullish signal
                         market_score += 7
@@ -563,7 +631,7 @@ def calculate_confidence_score(
                 elif direction == 'bearish':
                     if mkt_cap_change < -5.0: # Strong market down vs Bearish signal
                         market_score += 10  # Maximum points
-                        context_adjustment += 10  # Increased from 5
+                        context_adjustment += 10
                         context_notes.append(f"Strong market down ({mkt_cap_change:.2f}%) strongly supports bearish signal")
                     elif mkt_cap_change < -2.0: # Moderate market down vs Bearish signal
                         market_score += 7
@@ -571,7 +639,7 @@ def calculate_confidence_score(
                         context_notes.append(f"Market down ({mkt_cap_change:.2f}%) supports bearish signal")
                     elif mkt_cap_change > 5.0: # Strong market up vs Bearish signal
                         market_score += 0  # No points (strong conflict)
-                        context_adjustment -= 10  # Increased from 5
+                        context_adjustment -= 10
                         context_notes.append(f"Strong market up ({mkt_cap_change:.2f}%) conflicts with bearish signal")
                     elif mkt_cap_change > 2.0: # Moderate market up vs Bearish signal
                         market_score += 2
@@ -589,34 +657,139 @@ def calculate_confidence_score(
                         market_score += 3
                         context_notes.append(f"Stable market ({mkt_cap_change:.2f}%) aligns with neutral technical signals")
 
+            # --- Market Volatility Analysis (0-5 points) ---
+            if market_volatility:
+                volatility_pattern = market_volatility.get('volatility_pattern')
+                avg_volatility_24h = market_volatility.get('avg_volatility_24h')
+
+                # Add volatility information to context notes
+                if volatility_pattern and avg_volatility_24h is not None:
+                    context_notes.append(f"Market volatility: {volatility_pattern} ({avg_volatility_24h:.2f}% 24h)")
+
+                    # Score based on volatility pattern and alignment with predicted direction
+                    if volatility_pattern == 'highly_volatile':
+                        # High volatility increases confidence in strong directional moves
+                        if direction in ['bullish', 'bearish']:
+                            market_score += 5
+                            context_adjustment += 3
+                            context_notes.append(f"High volatility strengthens {direction} signal")
+                        else:
+                            # For neutral direction, high volatility suggests caution
+                            market_score += 2
+                            context_notes.append("High volatility with neutral signals suggests caution")
+                    elif volatility_pattern == 'stable':
+                        # Low volatility suggests less confidence in strong moves
+                        if direction in ['bullish', 'bearish']:
+                            market_score += 2
+                            context_notes.append(f"Low volatility may weaken {direction} signal strength")
+                        else:
+                            # For neutral direction, low volatility confirms sideways movement
+                            market_score += 4
+                            context_adjustment += 2
+                            context_notes.append("Low volatility confirms neutral/sideways bias")
+
             # --- BTC Dominance Analysis (0-5 points) ---
-            if global_market and global_market.get('market_cap_percentage', {}).get('btc') is not None:
-                btc_dominance = global_market.get('market_cap_percentage', {}).get('btc')
+            if btc_dominance_data:
+                btc_dominance = btc_dominance_data.get('btc_dominance')
+                dominance_level = btc_dominance_data.get('dominance_level')
+                market_implication = btc_dominance_data.get('market_implication')
+                btc_eth_ratio = btc_dominance_data.get('btc_eth_ratio')
+                ratio_interpretation = btc_dominance_data.get('ratio_interpretation')
 
-                # BTC dominance interpretation depends on the asset being analyzed
-                # For simplicity, we'll use some general rules:
-                # - Rising BTC dominance often negative for altcoins, positive for BTC
-                # - Falling BTC dominance often positive for altcoins, can be negative for BTC
+                # Add BTC dominance information to context notes
+                context_notes.append(f"BTC dominance: {dominance_level} ({btc_dominance:.2f}%, {market_implication})")
+                context_notes.append(f"BTC/ETH ratio: {btc_eth_ratio:.2f} ({ratio_interpretation})")
 
-                # We'd need historical data to determine if dominance is rising/falling
-                # For now, just use absolute levels as a general indicator
-                if btc_dominance > 50: # High BTC dominance
-                    context_notes.append(f"High BTC dominance ({btc_dominance:.2f}%)")
-                    # This could be added to the adjustment logic with more context
-                elif btc_dominance < 40: # Low BTC dominance
-                    context_notes.append(f"Low BTC dominance ({btc_dominance:.2f}%)")
-                    # This could be added to the adjustment logic with more context
+                # Score based on dominance implications for the asset
+                # This is a simplified approach - ideally we'd consider if the asset is BTC, ETH, or an altcoin
+                if market_implication == 'altcoin_bullish' and direction == 'bullish':
+                    market_score += 5
+                    context_adjustment += 3
+                    context_notes.append("Low BTC dominance supports bullish altcoin signal")
+                elif market_implication == 'altcoin_bearish' and direction == 'bearish':
+                    market_score += 5
+                    context_adjustment += 3
+                    context_notes.append("High BTC dominance supports bearish altcoin signal")
+                elif market_implication == 'altcoin_bullish' and direction == 'bearish':
+                    market_score += 1
+                    context_adjustment -= 2
+                    context_notes.append("Low BTC dominance conflicts with bearish altcoin signal")
+                elif market_implication == 'altcoin_bearish' and direction == 'bullish':
+                    market_score += 1
+                    context_adjustment -= 2
+                    context_notes.append("High BTC dominance conflicts with bullish altcoin signal")
+                else:
+                    market_score += 3
+                    context_notes.append(f"Neutral BTC dominance impact on {direction} signal")
 
-            # Cap the market score at 20 points
-            market_score = min(20, market_score)
+            # Cap the market score at 30 points (increased from 20)
+            market_score = min(30, market_score)
             # Store the market score for inclusion in the weighted calculation
             scores['market_context'] = market_score
         except Exception as e:
             print(f"Error processing market context: {e}")
             # Continue without market context adjustment
 
-    # Apply context adjustment and clamp score
-    overall_score += context_adjustment
+    # --- Twitter Sentiment Analysis ---
+    # Calculate a separate Twitter sentiment score (0-20 points)
+    twitter_score = 0
+    twitter_notes = []
+    twitter_adjustment = 0
+
+    if twitter_sentiment:
+        try:
+            overall_sentiment = twitter_sentiment.get('overall_sentiment', 'neutral')
+            summary = twitter_sentiment.get('summary', '')
+            key_tweets = twitter_sentiment.get('key_tweets', [])
+
+            # Base score on sentiment alignment with technical direction
+            if direction == 'bullish':
+                if overall_sentiment == 'bullish':
+                    twitter_score += 15  # Strong alignment
+                    twitter_adjustment += 10
+                    twitter_notes.append(f"Bullish Twitter sentiment strongly supports bullish technical signals")
+                elif overall_sentiment == 'bearish':
+                    twitter_score += 0   # Conflict
+                    twitter_adjustment -= 10
+                    twitter_notes.append(f"Bearish Twitter sentiment conflicts with bullish technical signals")
+                else:  # neutral
+                    twitter_score += 5   # Neutral
+                    twitter_notes.append(f"Neutral Twitter sentiment with bullish technical signals")
+            elif direction == 'bearish':
+                if overall_sentiment == 'bearish':
+                    twitter_score += 15  # Strong alignment
+                    twitter_adjustment += 10
+                    twitter_notes.append(f"Bearish Twitter sentiment strongly supports bearish technical signals")
+                elif overall_sentiment == 'bullish':
+                    twitter_score += 0   # Conflict
+                    twitter_adjustment -= 10
+                    twitter_notes.append(f"Bullish Twitter sentiment conflicts with bearish technical signals")
+                else:  # neutral
+                    twitter_score += 5   # Neutral
+                    twitter_notes.append(f"Neutral Twitter sentiment with bearish technical signals")
+            else:  # neutral direction
+                if overall_sentiment != 'neutral':
+                    twitter_score += 10  # Any clear sentiment is valuable with neutral technicals
+                    twitter_notes.append(f"{overall_sentiment.capitalize()} Twitter sentiment with neutral technical signals")
+                else:
+                    twitter_score += 5   # Both neutral
+                    twitter_notes.append(f"Neutral Twitter sentiment aligns with neutral technical signals")
+
+            # Add points for the presence of key tweets (indicates stronger signal)
+            if len(key_tweets) >= 3:
+                twitter_score += 5
+                twitter_notes.append(f"Multiple key tweets/themes identified ({len(key_tweets)})")
+
+            # Cap the Twitter score at 20 points
+            twitter_score = min(20, twitter_score)
+            # Store the Twitter score for inclusion in the weighted calculation
+            scores['twitter_sentiment'] = twitter_score
+        except Exception as e:
+            print(f"Error processing Twitter sentiment: {e}")
+            # Continue without Twitter sentiment adjustment
+
+    # Apply context and Twitter adjustments and clamp score
+    overall_score += context_adjustment + twitter_adjustment
     overall_score = max(0, min(100, round(overall_score)))
 
     # Add context notes to supporting/conflicting lists
@@ -626,6 +799,12 @@ def calculate_confidence_score(
         elif "conflicts" in note:
             final_conflicting.append(f"Context: {note}")
 
+    # Add Twitter notes to supporting/conflicting lists
+    for note in twitter_notes:
+        if "supports" in note or "aligns" in note:
+            final_supporting.append(f"Twitter: {note}")
+        elif "conflicts" in note:
+            final_conflicting.append(f"Twitter: {note}")
 
     # Generate trading signal based on confidence score and direction
     signal = generate_trading_signal(overall_score, direction, price, tech_indicators)

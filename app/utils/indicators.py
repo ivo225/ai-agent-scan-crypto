@@ -65,61 +65,200 @@ def calculate_technical_indicators(df: pd.DataFrame,
 
     # RSI (Relative Strength Index)
     try:
-        rsi_series = df.ta.rsi()
-        # Get the last non-NaN value
-        last_rsi = rsi_series.dropna().iloc[-1] if not rsi_series.dropna().empty else None
-        results["rsi"] = float(last_rsi) if last_rsi is not None else None
+        # First try using pandas_ta
+        try:
+            rsi_series = df.ta.rsi()
+            # Get the last non-NaN value
+            last_rsi = rsi_series.dropna().iloc[-1] if not rsi_series.dropna().empty else None
+            results["rsi"] = float(last_rsi) if last_rsi is not None else None
+        except Exception as e:
+            print(f"pandas_ta RSI calculation failed, trying manual calculation: {e}")
+
+            # Fallback to manual RSI calculation if pandas_ta fails
+            if 'close' in df.columns:
+                # Ensure close column is numeric
+                df['close'] = pd.to_numeric(df['close'], errors='coerce')
+                # Drop any NaN values
+                df_clean = df.dropna(subset=['close'])
+
+                # Calculate price changes
+                delta = df_clean['close'].diff()
+
+                # Get gains and losses
+                gain = delta.where(delta > 0, 0)
+                loss = -delta.where(delta < 0, 0)
+
+                # Calculate average gain and loss over 14 periods (standard RSI)
+                avg_gain = gain.rolling(window=14).mean()
+                avg_loss = loss.rolling(window=14).mean()
+
+                # Calculate RS and RSI
+                rs = avg_gain / avg_loss
+                rsi_manual = 100 - (100 / (1 + rs))
+
+                # Get the last value
+                last_rsi_manual = rsi_manual.dropna().iloc[-1] if not rsi_manual.dropna().empty else None
+
+                # Explicitly convert to float with error handling
+                try:
+                    results["rsi"] = float(last_rsi_manual) if last_rsi_manual is not None else None
+                    print("Successfully calculated RSI using manual method")
+                except (ValueError, TypeError) as e:
+                    print(f"Error converting manual RSI to float: {e}")
+                    results["rsi"] = None
+            else:
+                print("Cannot calculate RSI: 'close' column not found")
+                results["rsi"] = None
     except Exception as e:
         print(f"Error calculating RSI: {e}")
-        # results["rsi"] remains None
+        results["rsi"] = None
 
     # MACD (Moving Average Convergence Divergence) - Shorter Period
     try:
-        macd_df = df.ta.macd(fast=macd_fast, slow=macd_slow, signal=macd_signal)
-        if macd_df is not None and not macd_df.empty:
-            # Column names depend on the parameters used
-            macd_col = f'MACD_{macd_fast}_{macd_slow}_{macd_signal}'
-            signal_col = f'MACDs_{macd_fast}_{macd_slow}_{macd_signal}'
-            hist_col = f'MACDh_{macd_fast}_{macd_slow}_{macd_signal}'
+        # First try using pandas_ta
+        try:
+            macd_df = df.ta.macd(fast=macd_fast, slow=macd_slow, signal=macd_signal)
+            if macd_df is not None and not macd_df.empty:
+                # Column names depend on the parameters used
+                macd_col = f'MACD_{macd_fast}_{macd_slow}_{macd_signal}'
+                signal_col = f'MACDs_{macd_fast}_{macd_slow}_{macd_signal}'
+                hist_col = f'MACDh_{macd_fast}_{macd_slow}_{macd_signal}'
 
-            last_macd = macd_df[macd_col].dropna().iloc[-1] if not macd_df[macd_col].dropna().empty else None
-            last_signal = macd_df[signal_col].dropna().iloc[-1] if not macd_df[signal_col].dropna().empty else None
-            last_hist = macd_df[hist_col].dropna().iloc[-1] if not macd_df[hist_col].dropna().empty else None
+                last_macd = macd_df[macd_col].dropna().iloc[-1] if not macd_df[macd_col].dropna().empty else None
+                last_signal = macd_df[signal_col].dropna().iloc[-1] if not macd_df[signal_col].dropna().empty else None
+                last_hist = macd_df[hist_col].dropna().iloc[-1] if not macd_df[hist_col].dropna().empty else None
 
-            results["macd"] = float(last_macd) if last_macd is not None else None
-            results["macd_signal"] = float(last_signal) if last_signal is not None else None
-            results["macd_hist"] = float(last_hist) if last_hist is not None else None
-        # else: results remain None
-    except KeyError as e:
-         print(f"KeyError calculating MACD (likely column name mismatch or insufficient data): {e}")
-         # results remain None
+                results["macd"] = float(last_macd) if last_macd is not None else None
+                results["macd_signal"] = float(last_signal) if last_signal is not None else None
+                results["macd_hist"] = float(last_hist) if last_hist is not None else None
+            else:
+                raise Exception("pandas_ta MACD returned None or empty DataFrame")
+        except Exception as e:
+            print(f"pandas_ta MACD calculation failed, trying manual calculation: {e}")
+
+            # Fallback to manual MACD calculation if pandas_ta fails
+            if 'close' in df.columns:
+                # Ensure close column is numeric
+                df['close'] = pd.to_numeric(df['close'], errors='coerce')
+                # Drop any NaN values
+                df_clean = df.dropna(subset=['close'])
+
+                # Calculate EMAs for MACD
+                ema_fast = df_clean['close'].ewm(span=macd_fast, adjust=False).mean()
+                ema_slow = df_clean['close'].ewm(span=macd_slow, adjust=False).mean()
+
+                # Calculate MACD line
+                macd_line = ema_fast - ema_slow
+
+                # Calculate signal line
+                signal_line = macd_line.ewm(span=macd_signal, adjust=False).mean()
+
+                # Calculate histogram
+                histogram = macd_line - signal_line
+
+                # Get the last values
+                last_macd_manual = macd_line.iloc[-1] if not macd_line.empty else None
+                last_signal_manual = signal_line.iloc[-1] if not signal_line.empty else None
+                last_hist_manual = histogram.iloc[-1] if not histogram.empty else None
+
+                # Explicitly convert to float with error handling
+                try:
+                    results["macd"] = float(last_macd_manual) if last_macd_manual is not None else None
+                    results["macd_signal"] = float(last_signal_manual) if last_signal_manual is not None else None
+                    results["macd_hist"] = float(last_hist_manual) if last_hist_manual is not None else None
+                    print("Successfully calculated MACD using manual method")
+                except (ValueError, TypeError) as e:
+                    print(f"Error converting manual MACD to float: {e}")
+                    results["macd"] = None
+                    results["macd_signal"] = None
+                    results["macd_hist"] = None
+            else:
+                print("Cannot calculate MACD: 'close' column not found")
+                results["macd"] = None
+                results["macd_signal"] = None
+                results["macd_hist"] = None
     except Exception as e:
         print(f"Error calculating MACD ({macd_fast},{macd_slow},{macd_signal}): {e}")
-        # results remain None
+        results["macd"] = None
+        results["macd_signal"] = None
+        results["macd_hist"] = None
 
     # Simple Moving Averages (SMA)
     for period in sma_periods:
         try:
-            sma_series = df.ta.sma(length=period)
-            if sma_series is not None and not sma_series.empty:
-                last_sma = sma_series.dropna().iloc[-1]
-                results[f"sma_{period}"] = float(last_sma) if last_sma is not None else None
-            # else: result remains None
+            # First try using pandas_ta
+            try:
+                sma_series = df.ta.sma(length=period)
+                if sma_series is not None and not sma_series.empty:
+                    last_sma = sma_series.dropna().iloc[-1]
+                    results[f"sma_{period}"] = float(last_sma) if last_sma is not None else None
+                    continue  # Skip to next period if successful
+            except Exception as e:
+                print(f"pandas_ta SMA {period} calculation failed, trying pandas directly: {e}")
+
+            # Fallback to pandas rolling if pandas_ta fails
+            if 'close' in df.columns:
+                # Ensure close column is numeric
+                df['close'] = pd.to_numeric(df['close'], errors='coerce')
+                # Drop any NaN values
+                df_clean = df.dropna(subset=['close'])
+                # Calculate SMA using pandas
+                sma_pd = df_clean['close'].rolling(window=period).mean()
+                if not sma_pd.empty:
+                    last_sma_pd = sma_pd.dropna().iloc[-1] if not sma_pd.dropna().empty else None
+                    # Explicitly convert to float with error handling
+                    try:
+                        results[f"sma_{period}"] = float(last_sma_pd) if last_sma_pd is not None else None
+                        print(f"Successfully calculated SMA {period} using pandas rolling")
+                    except (ValueError, TypeError) as e:
+                        print(f"Error converting SMA {period} to float: {e}, value: {last_sma_pd}, type: {type(last_sma_pd)}")
+                        results[f"sma_{period}"] = None
+                else:
+                    print(f"SMA {period} calculation resulted in empty series")
+                    results[f"sma_{period}"] = None
+            else:
+                print(f"Cannot calculate SMA {period}: 'close' column not found")
+                results[f"sma_{period}"] = None
         except Exception as e:
             print(f"Error calculating SMA {period}: {e}")
-            # result remains None
+            results[f"sma_{period}"] = None
 
     # Exponential Moving Averages (EMA)
     for period in ema_periods:
         try:
-            ema_series = df.ta.ema(length=period)
-            if ema_series is not None and not ema_series.empty:
-                last_ema = ema_series.dropna().iloc[-1]
-                results[f"ema_{period}"] = float(last_ema) if last_ema is not None else None
-            # else: result remains None
+            # First try using pandas_ta
+            try:
+                ema_series = df.ta.ema(length=period)
+                if ema_series is not None and not ema_series.empty:
+                    last_ema = ema_series.dropna().iloc[-1]
+                    results[f"ema_{period}"] = float(last_ema) if last_ema is not None else None
+                    continue  # Skip to next period if successful
+            except Exception as e:
+                print(f"pandas_ta EMA {period} calculation failed, trying pandas directly: {e}")
+
+            # Fallback to pandas ewm if pandas_ta fails
+            if 'close' in df.columns:
+                # Ensure close column is numeric
+                df['close'] = pd.to_numeric(df['close'], errors='coerce')
+                # Drop any NaN values
+                df_clean = df.dropna(subset=['close'])
+                # Calculate EMA using pandas
+                ema_pd = df_clean['close'].ewm(span=period, adjust=False).mean()
+                if not ema_pd.empty:
+                    last_ema_pd = ema_pd.iloc[-1]
+                    # Explicitly convert to float with error handling
+                    try:
+                        results[f"ema_{period}"] = float(last_ema_pd)
+                        print(f"Successfully calculated EMA {period} using pandas ewm")
+                    except (ValueError, TypeError) as e:
+                        print(f"Error converting EMA {period} to float: {e}, value: {last_ema_pd}, type: {type(last_ema_pd)}")
+                        results[f"ema_{period}"] = None
+            else:
+                print(f"Cannot calculate EMA {period}: 'close' column not found")
+                results[f"ema_{period}"] = None
         except Exception as e:
             print(f"Error calculating EMA {period}: {e}")
-            # result remains None
+            results[f"ema_{period}"] = None
 
     # Average Directional Index (ADX)
     try:

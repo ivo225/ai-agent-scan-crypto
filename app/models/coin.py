@@ -82,6 +82,9 @@ class CoinReportSchema(BaseModel):
     fear_greed_classification: Optional[str] = None
     market_cap_change_24h: Optional[float] = None
     btc_dominance: Optional[float] = None
+    # Twitter Sentiment Fields
+    twitter_sentiment_summary: Optional[str] = None
+    twitter_sentiment_overall: Optional[str] = None
     # Let the database handle the default timestamp generation
     timestamp: Optional[datetime] = Field(None, description="Timestamp of report creation (set by DB)")
 

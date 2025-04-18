@@ -25,6 +25,8 @@ from app.services.crypto_panic_service import get_sentiment_data
 from app.services.technical_analysis_service import get_technical_analysis
 from app.services.deepseek_service import get_deepseek_analysis
 from app.services.market_context_service import get_market_context # Import market context service
+from app.services.perplexity_service import get_twitter_sentiment_for_coin # Import Twitter sentiment service
+from app.utils.cache_manager import cache_manager # Import cache manager
 
 # Import DB Components
 from app.db.database import AsyncSessionLocal, init_db # Keep init_db import for potential direct use
@@ -55,7 +57,8 @@ def _display_analysis_results(
     tech_analysis: Optional[Dict[str, Optional[float]]],
     sentiment_data: Optional[Dict],
     deepseek_pred: Optional[str],
-    market_context_data: Optional[Dict[str, Any]] = None # Add market context arg
+    market_context_data: Optional[Dict[str, Any]] = None, # Add market context arg
+    twitter_sentiment: Optional[Dict[str, Any]] = None # Add Twitter sentiment arg
 ):
     """Displays combined analysis results in a formatted table."""
     table = Table(title=f"Analysis for {coin_data.name} ({coin_data.symbol.upper()})", show_header=True, header_style="bold magenta")
@@ -173,21 +176,155 @@ def _display_analysis_results(
     table.add_row("[bold cyan]Sentiment (CryptoPanic)[/bold cyan]", "")
     table.add_row("Recent News Count", str(sentiment_data.get('count', 0)) if sentiment_data else "N/A")
 
-    # Market Context Display
+    # Twitter Sentiment
+    table.add_section()
+    table.add_row("[bold cyan]Twitter Sentiment (Perplexity)[/bold cyan]", "")
+
+    # Get the Twitter sentiment data from the function arguments
+    if isinstance(deepseek_pred, str) and 'twitter_sentiment' in locals():
+        # Use the twitter_sentiment parameter if available
+        twitter_data = twitter_sentiment
+    else:
+        # Try to extract from deepseek_pred if it's a dict
+        twitter_data = deepseek_pred.get('twitter_sentiment') if isinstance(deepseek_pred, dict) else None
+
+    if twitter_data:
+        overall = twitter_data.get('overall_sentiment', 'neutral').capitalize()
+        table.add_row("Overall Sentiment", overall)
+        key_tweets = twitter_data.get('key_tweets', [])
+        if key_tweets:
+            for i, tweet in enumerate(key_tweets[:3], 1):
+                table.add_row(f"Key Tweet/Theme {i}", tweet[:100] + "..." if len(tweet) > 100 else tweet)
+    else:
+        table.add_row("Twitter Data", "Fetching in progress or unavailable")
+
+    # Enhanced Market Context Display
     table.add_section()
     table.add_row("[bold cyan]Overall Market Context[/bold cyan]", "")
     if market_context_data:
+        # Extract all market context components
         fear_greed = market_context_data.get('fear_greed')
+        fear_greed_trend = market_context_data.get('fear_greed_trend')
         global_market = market_context_data.get('global_market')
+        market_volatility = market_context_data.get('market_volatility')
+        btc_dominance_data = market_context_data.get('btc_dominance')
 
+        # Fear & Greed Index (Current)
         fg_value = fear_greed.get('value') if fear_greed else None
         fg_class = fear_greed.get('value_classification') if fear_greed else None
-        table.add_row("Fear & Greed Index", f"{fg_value} ({fg_class})" if fg_value else "N/A")
 
+        # Format with color based on value
+        if fg_value:
+            fg_value_int = int(fg_value)
+            if fg_value_int > 75:
+                fg_display = f"[bold red]{fg_value} ({fg_class})[/bold red]"
+            elif fg_value_int > 60:
+                fg_display = f"[red]{fg_value} ({fg_class})[/red]"
+            elif fg_value_int < 25:
+                fg_display = f"[bold green]{fg_value} ({fg_class})[/bold green]"
+            elif fg_value_int < 40:
+                fg_display = f"[green]{fg_value} ({fg_class})[/green]"
+            else:
+                fg_display = f"[yellow]{fg_value} ({fg_class})[/yellow]"
+        else:
+            fg_display = "N/A"
+
+        table.add_row("Fear & Greed Index", fg_display)
+
+        # Fear & Greed Trend
+        if fear_greed_trend:
+            trend = fear_greed_trend.get('trend')
+            trend_direction = fear_greed_trend.get('trend_direction')
+            avg_value = fear_greed_trend.get('avg_value')
+
+            # Format trend with color
+            if trend in ['extreme_fear', 'fear']:
+                trend_display = f"[green]{trend.replace('_', ' ').title()}[/green]"
+            elif trend in ['extreme_greed', 'greed']:
+                trend_display = f"[red]{trend.replace('_', ' ').title()}[/red]"
+            else:
+                trend_display = f"[yellow]{trend.replace('_', ' ').title()}[/yellow]"
+
+            # Format direction with arrow
+            if trend_direction == 'strongly_increasing':
+                direction_display = "[bold green]↑↑[/bold green]"
+            elif trend_direction == 'increasing':
+                direction_display = "[green]↑[/green]"
+            elif trend_direction == 'strongly_decreasing':
+                direction_display = "[bold red]↓↓[/bold red]"
+            elif trend_direction == 'decreasing':
+                direction_display = "[red]↓[/red]"
+            else:
+                direction_display = "[yellow]→[/yellow]"
+
+            table.add_row("F&G Trend (30d)", f"{trend_display} {direction_display} (avg: {avg_value})")
+
+        # Global Market Data
         mkt_cap_change = global_market.get('market_cap_change_percentage_24h_usd') if global_market else None
-        btc_dom = global_market.get('market_cap_percentage', {}).get('btc') if global_market and isinstance(global_market.get('market_cap_percentage'), dict) else None
-        table.add_row("Global Market Cap Change (24h)", f"{mkt_cap_change:.2f}%" if mkt_cap_change is not None else "N/A")
-        table.add_row("BTC Dominance", f"{btc_dom:.2f}%" if btc_dom is not None else "N/A")
+
+        # Format with color based on value
+        if mkt_cap_change is not None:
+            if mkt_cap_change > 5.0:
+                mkt_cap_display = f"[bold green]+{mkt_cap_change:.2f}%[/bold green] (Strong Uptrend)"
+            elif mkt_cap_change > 2.0:
+                mkt_cap_display = f"[green]+{mkt_cap_change:.2f}%[/green] (Uptrend)"
+            elif mkt_cap_change < -5.0:
+                mkt_cap_display = f"[bold red]{mkt_cap_change:.2f}%[/bold red] (Strong Downtrend)"
+            elif mkt_cap_change < -2.0:
+                mkt_cap_display = f"[red]{mkt_cap_change:.2f}%[/red] (Downtrend)"
+            else:
+                mkt_cap_display = f"[yellow]{mkt_cap_change:.2f}%[/yellow] (Stable)"
+        else:
+            mkt_cap_display = "N/A"
+
+        table.add_row("Global Market Cap Change (24h)", mkt_cap_display)
+
+        # Market Volatility
+        if market_volatility:
+            volatility_pattern = market_volatility.get('volatility_pattern')
+            avg_volatility_24h = market_volatility.get('avg_volatility_24h')
+
+            # Format with color based on volatility
+            if volatility_pattern == 'highly_volatile':
+                volatility_display = f"[bold red]{volatility_pattern.replace('_', ' ').title()}[/bold red] ({avg_volatility_24h:.2f}% 24h)"
+            elif volatility_pattern == 'volatile':
+                volatility_display = f"[red]{volatility_pattern.title()}[/red] ({avg_volatility_24h:.2f}% 24h)"
+            elif volatility_pattern == 'moderate':
+                volatility_display = f"[yellow]{volatility_pattern.title()}[/yellow] ({avg_volatility_24h:.2f}% 24h)"
+            elif volatility_pattern == 'stable':
+                volatility_display = f"[green]{volatility_pattern.title()}[/green] ({avg_volatility_24h:.2f}% 24h)"
+            else:
+                volatility_display = f"{volatility_pattern.title()} ({avg_volatility_24h:.2f}% 24h)"
+
+            table.add_row("Market Volatility", volatility_display)
+
+        # BTC Dominance
+        if btc_dominance_data:
+            btc_dominance = btc_dominance_data.get('btc_dominance')
+            dominance_level = btc_dominance_data.get('dominance_level')
+            market_implication = btc_dominance_data.get('market_implication')
+            btc_eth_ratio = btc_dominance_data.get('btc_eth_ratio')
+
+            # Format with color based on dominance level
+            if dominance_level in ['very_high', 'high']:
+                dominance_display = f"[bold red]{btc_dominance:.2f}%[/bold red] ({dominance_level.replace('_', ' ').title()})"
+            elif dominance_level in ['very_low', 'low']:
+                dominance_display = f"[bold green]{btc_dominance:.2f}%[/bold green] ({dominance_level.replace('_', ' ').title()})"
+            else:
+                dominance_display = f"[yellow]{btc_dominance:.2f}%[/yellow] ({dominance_level.replace('_', ' ').title()})"
+
+            table.add_row("BTC Dominance", dominance_display)
+
+            # Format market implication
+            if market_implication == 'altcoin_bullish':
+                implication_display = f"[green]{market_implication.replace('_', ' ').title()}[/green]"
+            elif market_implication == 'altcoin_bearish':
+                implication_display = f"[red]{market_implication.replace('_', ' ').title()}[/red]"
+            else:
+                implication_display = f"[yellow]{market_implication.replace('_', ' ').title()}[/yellow]"
+
+            table.add_row("Market Implication", implication_display)
+            table.add_row("BTC/ETH Ratio", f"{btc_eth_ratio:.2f}")
     else:
         table.add_row("Context Data", "Failed/Skipped")
 
@@ -340,25 +477,34 @@ async def run_analysis(coin_identifier: str):
         console.print(f"Fetching broader market context...")
         market_context_data = await get_market_context()
 
-        # 5. Get DeepSeek Analysis (Now passing technical indicators AND market context)
+        # 5. Fetch Twitter Sentiment via Perplexity
+        console.print(f"Fetching Twitter sentiment via Perplexity...")
+        twitter_sentiment_results = await get_twitter_sentiment_for_coin(
+            coin_name=coin_data_result.name,
+            coin_symbol=coin_data_result.symbol
+        )
+
+        # 6. Get DeepSeek Analysis (Now passing all data including Twitter sentiment)
         console.print(f"Generating AI analysis via DeepSeek...")
-        # Pass market context data to the AI analysis function
+        # Pass all data to the AI analysis function
         deepseek_analysis_result = await get_deepseek_analysis(
             coin_data=coin_data_result,
             sentiment_data=sentiment_data_results,
             technical_indicators=tech_analysis_results,
-            market_context=market_context_data # Pass the fetched context
+            market_context=market_context_data,
+            twitter_sentiment=twitter_sentiment_results
         )
 
-        # 6. Display Results (Update to include market context later)
+        # 7. Display Results with all data
         console.print("\n--- Analysis Complete ---")
-        # Pass market context to display function
+        # Pass all data to display function
         _display_analysis_results(
             coin_data_result,
             tech_analysis_results,
             sentiment_data_results,
             deepseek_analysis_result,
-            market_context_data # Pass the context here
+            market_context_data, # Pass the context here
+            twitter_sentiment_results # Pass Twitter sentiment data
         )
 
         # 7. Prepare and Save Report to DB (Silently)
@@ -395,6 +541,9 @@ async def run_analysis(coin_identifier: str):
             fear_greed_classification=fear_greed.get('value_classification') if fear_greed else None,
             market_cap_change_24h=mkt_cap_change,
             btc_dominance=btc_dom,
+            # Add Twitter sentiment fields
+            twitter_sentiment_summary=twitter_sentiment_results.get('summary', '')[:1000] if twitter_sentiment_results else None,
+            twitter_sentiment_overall=twitter_sentiment_results.get('overall_sentiment') if twitter_sentiment_results else None
         )
         created_report = await report_repository.create_report(db=db_session, report_data=report_to_save)
         if created_report:
@@ -458,9 +607,125 @@ async def chat_loop():
             traceback.print_exc() # Print full traceback for debugging
 
 
+# --- Database Setup Command ---
+
+async def setup_database():
+    """Initialize the database schema."""
+    console.print("Setting up database...", style="bold blue")
+    try:
+        await init_db()
+        console.print("[bold green]Database setup complete![/bold green] Tables have been created/recreated.")
+    except Exception as e:
+        console.print(f"[bold red]Error setting up database:[/bold red] {e}")
+        traceback.print_exc()
+
+# --- Cache Management Commands ---
+
+async def show_cache_stats():
+    """Display statistics about the current cache."""
+    stats = await cache_manager.get_stats()
+
+    console.print("[bold cyan]Cache Statistics[/bold cyan]")
+    console.print(f"Total namespaces: {stats['total_namespaces']}")
+    console.print(f"Total entries: {stats['total_entries']}")
+
+    # Display TTL settings
+    ttl_table = Table(title="Default TTL Settings (seconds)")
+    ttl_table.add_column("Namespace", style="cyan")
+    ttl_table.add_column("TTL (seconds)", justify="right")
+
+    for namespace, ttl in stats['default_ttls'].items():
+        ttl_table.add_row(namespace, str(ttl))
+
+    console.print(ttl_table)
+
+    # Display namespace details
+    if stats['namespaces']:
+        ns_table = Table(title="Cache Namespaces")
+        ns_table.add_column("Namespace", style="cyan")
+        ns_table.add_column("Total Entries", justify="right")
+        ns_table.add_column("Active", justify="right", style="green")
+        ns_table.add_column("Expired", justify="right", style="yellow")
+
+        for namespace, details in stats['namespaces'].items():
+            ns_table.add_row(
+                namespace,
+                str(details['total_entries']),
+                str(details['active_entries']),
+                str(details['expired_entries'])
+            )
+
+        console.print(ns_table)
+    else:
+        console.print("[yellow]No cache entries found.[/yellow]")
+
+async def clear_cache(namespace=None):
+    """Clear the cache, optionally for a specific namespace only."""
+    if namespace:
+        count = await cache_manager.clear_namespace(namespace)
+        console.print(f"[green]Cleared {count} entries from namespace '{namespace}'[/green]")
+    else:
+        count = await cache_manager.clear_all()
+        console.print(f"[green]Cleared all caches ({count} total entries)[/green]")
+
+async def set_cache_ttl(namespace, ttl_seconds):
+    """Set the TTL for a specific namespace."""
+    try:
+        ttl = int(ttl_seconds)
+        if ttl <= 0:
+            console.print("[red]TTL must be a positive integer[/red]")
+            return
+
+        cache_manager.set_default_ttl(namespace, ttl)
+        console.print(f"[green]Set TTL for namespace '{namespace}' to {ttl} seconds[/green]")
+    except ValueError:
+        console.print("[red]TTL must be a valid integer[/red]")
+
+# --- Command Line Interface ---
+
+async def main():
+    """Main entry point for the CLI."""
+    # Check for command line arguments
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        if command == "setup-db":
+            await setup_database()
+            return
+        elif command == "cache-stats":
+            await show_cache_stats()
+            return
+        elif command == "cache-clear":
+            if len(sys.argv) > 2:
+                namespace = sys.argv[2]
+                await clear_cache(namespace)
+            else:
+                await clear_cache()
+            return
+        elif command == "cache-ttl":
+            if len(sys.argv) < 4:
+                console.print("[red]Usage: cache-ttl <namespace> <seconds>[/red]")
+            else:
+                namespace = sys.argv[2]
+                ttl_seconds = sys.argv[3]
+                await set_cache_ttl(namespace, ttl_seconds)
+            return
+        elif command == "--help" or command == "-h":
+            console.print("Available commands:", style="bold blue")
+            console.print("  setup-db    - Initialize the database schema (warning: this will drop existing tables)")
+            console.print("  cache-stats - Show cache statistics")
+            console.print("  cache-clear - Clear all caches")
+            console.print("  cache-clear <namespace> - Clear a specific cache namespace")
+            console.print("  cache-ttl <namespace> <seconds> - Set TTL for a namespace")
+            console.print("  --help, -h  - Show this help message")
+            console.print("  (no args)   - Start the interactive chat interface")
+            return
+
+    # Default: run the chat loop
+    await chat_loop()
+
 if __name__ == "__main__":
     try:
-        asyncio.run(chat_loop())
+        asyncio.run(main())
     except KeyboardInterrupt:
         console.print("\nExiting.", style="bold blue")
         sys.exit(0)

@@ -1,13 +1,19 @@
 import os
 import httpx
+import logging
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+from app.utils.cache_manager import cache_manager, cached
 
 load_dotenv() # Load environment variables from .env file
 
 CRYPTO_PANIC_API_KEY = os.getenv("CRYPTO_PANIC_API_KEY")
 CRYPTO_PANIC_API_BASE_URL = "https://cryptopanic.com/api/v1"
 
+# Setup logging
+logger = logging.getLogger(__name__)
+
+@cached('cryptopanic', lambda currency_symbol, **kwargs: f"sentiment_{currency_symbol.lower()}")
 async def get_sentiment_data(currency_symbol: str) -> Optional[Dict[str, Any]]:
     """
     Fetches news and sentiment data for a specific currency from CryptoPanic API.
@@ -20,8 +26,10 @@ async def get_sentiment_data(currency_symbol: str) -> Optional[Dict[str, Any]]:
         Raises httpx.HTTPStatusError for API errors (4xx, 5xx).
     """
     if not CRYPTO_PANIC_API_KEY:
-        print("Error: CRYPTO_PANIC_API_KEY not found in environment variables.")
+        logger.error("Error: CRYPTO_PANIC_API_KEY not found in environment variables.")
         return None
+
+    logger.info(f"Fetching sentiment data for {currency_symbol} from CryptoPanic")
 
     api_url = f"{CRYPTO_PANIC_API_BASE_URL}/posts/"
     params = {
@@ -39,7 +47,7 @@ async def get_sentiment_data(currency_symbol: str) -> Optional[Dict[str, Any]]:
             data = response.json()
             # Basic check for results
             if not data or "results" not in data:
-                print(f"No sentiment data found for {currency_symbol} on CryptoPanic.")
+                logger.warning(f"No sentiment data found for {currency_symbol} on CryptoPanic.")
                 return None
 
             # Process the results slightly for easier consumption
@@ -67,14 +75,14 @@ async def get_sentiment_data(currency_symbol: str) -> Optional[Dict[str, Any]]:
             return processed_data
 
         except httpx.HTTPStatusError as e:
-            print(f"HTTP error fetching CryptoPanic data for {currency_symbol}: {e.response.status_code} - {e.response.text}")
+            logger.error(f"HTTP error fetching CryptoPanic data for {currency_symbol}: {e.response.status_code} - {e.response.text}")
             # Handle specific errors (e.g., 401 Unauthorized if key is invalid)
             raise e
         except httpx.RequestError as e:
-            print(f"Network error fetching CryptoPanic data for {currency_symbol}: {e}")
+            logger.error(f"Network error fetching CryptoPanic data for {currency_symbol}: {e}")
             return None
         except Exception as e:
-            print(f"An unexpected error occurred fetching CryptoPanic data for {currency_symbol}: {e}")
+            logger.error(f"An unexpected error occurred fetching CryptoPanic data for {currency_symbol}: {e}")
             return None
 
 # Example usage (can be removed or moved to CLI/tests)

@@ -33,6 +33,9 @@ class CoinReport(Base):
     fear_greed_classification = Column(String, nullable=True, comment="Fear & Greed Index classification")
     market_cap_change_24h = Column(Float, nullable=True, comment="Global market cap change % (24h)")
     btc_dominance = Column(Float, nullable=True, comment="Bitcoin dominance percentage")
+    # Twitter Sentiment Fields
+    twitter_sentiment_summary = Column(String, nullable=True, comment="Summary of Twitter sentiment from Perplexity")
+    twitter_sentiment_overall = Column(String, nullable=True, comment="Overall Twitter sentiment (bullish, bearish, neutral)")
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     def __repr__(self):

@@ -9,8 +9,12 @@ from app.models.chat import ChatMessageRequest, ChatMessageResponse
 from app.services.coin_gecko_service import get_coin_data_by_id, get_coin_id_from_symbol
 from app.services.crypto_panic_service import get_sentiment_data
 from app.services.technical_analysis_service import get_technical_analysis
-# Import both DeepSeek functions
+# Import necessary services
+from app.services.coin_gecko_service import get_coin_data_by_id, get_coin_id_from_symbol
+from app.services.crypto_panic_service import get_sentiment_data
+from app.services.technical_analysis_service import get_technical_analysis
 from app.services.deepseek_service import get_deepseek_analysis, get_deepseek_chat_response
+from app.services.perplexity_service import get_twitter_sentiment_for_coin # Import the new service
 from app.db.database import AsyncSessionLocal
 from app.db.repositories import report_repository
 from app.models.coin import CoinData, CoinReportSchema
@@ -51,6 +55,7 @@ async def _run_analysis_for_chat(coin_identifier: str) -> Tuple[Optional[str], O
     db_session = AsyncSessionLocal()
     tech_analysis_results = None
     sentiment_data_results = None
+    twitter_sentiment_results = None # Add placeholder for Twitter data
     deepseek_analysis_result = None
     coin_data_result = None
     formatted_output = ""
@@ -67,20 +72,28 @@ async def _run_analysis_for_chat(coin_identifier: str) -> Tuple[Optional[str], O
 
         # 2. Fetch Sentiment Data
         sentiment_data_results = await get_sentiment_data(coin_data_result.symbol)
-        analysis_data['sentiment'] = sentiment_data_results
+        analysis_data['sentiment'] = sentiment_data_results # CryptoPanic news sentiment
 
-        # 3. Perform Technical Analysis
+        # 3. Fetch Twitter Sentiment via Perplexity API
+        twitter_sentiment_results = await get_twitter_sentiment_for_coin(
+            coin_name=coin_data_result.name,
+            coin_symbol=coin_data_result.symbol
+        )
+        analysis_data['twitter_sentiment'] = twitter_sentiment_results
+
+        # 4. Perform Technical Analysis
         tech_analysis_results = await get_technical_analysis(actual_coin_id, days=90)
         if tech_analysis_results is None:
             print("Warning: Technical analysis failed or returned no data.")
             # Continue without TA data
         analysis_data['technical_analysis'] = tech_analysis_results
 
-        # 4. Get DeepSeek Analysis
+        # 5. Get DeepSeek Analysis with all data including Twitter sentiment
         deepseek_analysis_result = await get_deepseek_analysis(
             coin_data=coin_data_result,
-            sentiment_data=sentiment_data_results,
-            technical_indicators=tech_analysis_results
+            sentiment_data=sentiment_data_results, # CryptoPanic data
+            technical_indicators=tech_analysis_results,
+            twitter_sentiment=twitter_sentiment_results
         )
         analysis_data['ai_analysis'] = deepseek_analysis_result
 
@@ -105,7 +118,20 @@ async def _run_analysis_for_chat(coin_identifier: str) -> Tuple[Optional[str], O
                  formatted_output += f"- Confidence: {score_display} ({direction})\n"
 
         if sentiment_data_results:
-            formatted_output += f"\nSentiment (News Count): {sentiment_data_results.get('count', 0)}\n"
+            formatted_output += f"\nNews Sentiment (CryptoPanic): {sentiment_data_results.get('count', 0)} articles\n"
+
+        # Add Twitter Sentiment section
+        if twitter_sentiment_results:
+            overall = twitter_sentiment_results.get('overall_sentiment', 'neutral').capitalize()
+            key_tweets = twitter_sentiment_results.get('key_tweets', [])
+            formatted_output += f"\nTwitter Sentiment (Perplexity): {overall}\n"
+            if key_tweets:
+                formatted_output += "Key themes/tweets:\n"
+                for i, tweet in enumerate(key_tweets[:3], 1):  # Show up to 3 key tweets
+                    formatted_output += f"{i}. {tweet[:100]}...\n"
+        else:
+            formatted_output += "\nTwitter Sentiment (Perplexity): Not available.\n"
+
 
         if deepseek_analysis_result:
             formatted_output += f"\nAI Analysis Summary:\n{deepseek_analysis_result[:300]}...\n" # Truncate for chat
@@ -130,8 +156,12 @@ async def _run_analysis_for_chat(coin_identifier: str) -> Tuple[Optional[str], O
              confidence_direction=tech_analysis_results.get('confidence', {}).get('direction') if tech_analysis_results else None,
              confidence_supporting=",".join(tech_analysis_results.get('confidence', {}).get('supporting_indicators', [])) if tech_analysis_results else None,
              confidence_conflicting=",".join(tech_analysis_results.get('confidence', {}).get('conflicting_indicators', [])) if tech_analysis_results else None,
+            # Add Twitter sentiment data to report
+            twitter_sentiment_summary=twitter_sentiment_results.get('summary', '')[:1000] if twitter_sentiment_results else None,
+            twitter_sentiment_overall=twitter_sentiment_results.get('overall_sentiment') if twitter_sentiment_results else None
         )
         try:
+            # Save report (consider if Twitter data should be included)
             await report_repository.create_report(db=db_session, report_data=report_to_save)
             print(f"Report saved for {actual_coin_id}")
         except Exception as db_err:
