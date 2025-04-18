@@ -62,11 +62,25 @@ python -m app.cli setup-db
 ```
 This command creates the `crypto_analysis.db` file (if it doesn't exist) and sets up the necessary tables (e.g., `coin_reports`).
 
-## Running the Application
+## Running the Interactive CLI Chat
 
-To start the FastAPI server:
+To start the interactive chat interface directly in your terminal:
 
 ```bash
+# Ensure your virtual environment is active
+# source venv/bin/activate  (or .\venv\Scripts\activate on Windows)
+
+python -m app.cli
+```
+
+This will launch the chat prompt where you can interact with the analysis bot (e.g., using `/analyze <symbol_or_id>`). Type `/exit` or `/quit` to leave the chat.
+
+## Running the API Server (Optional)
+
+If you want to expose the functionality via an HTTP API (e.g., for integration with other applications or using the Swagger UI), run the FastAPI server using Uvicorn:
+
+```bash
+# Ensure your virtual environment is active
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -74,24 +88,25 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 *   `--host 0.0.0.0`: Makes the server accessible on your local network.
 *   `--port 8000`: Specifies the port.
 
-The API will be available at `http://localhost:8000` or `http://<your-local-ip>:8000`.
+When the server is running, the API will be available at `http://localhost:8000` or `http://<your-local-ip>:8000`.
 
 ## Usage
 
-### API
+### Interactive CLI
+
+When running `python -m app.cli`:
+*   Type `/analyze <symbol_or_id>` (e.g., `/analyze bitcoin` or `/analyze btc`) to get an analysis report.
+*   Type any other message to chat with the AI (using DeepSeek by default).
+*   Type `/exit` or `/quit` to stop.
+*   Use `python -m app.cli --help` to see other available CLI commands (like `setup-db`, `cache-stats`).
+
+### API (When running Uvicorn)
 
 *   **Interactive Documentation (Swagger UI):** Open `http://localhost:8000/docs` in your browser to see all available API endpoints, test them, and view request/response models.
 *   **Chat Endpoint (`/api/chat`):** Use this endpoint (via Swagger UI or tools like `curl`/Postman) to interact with the analysis bot. Send a POST request with a JSON body like:
     ```json
     {
       "message": "analyze bitcoin",
-      "session_id": "user123"
+      "session_id": "user123" # A unique ID for the chat session
     }
     ```
-
-### Command Line Interface (CLI)
-
-The project also includes a basic CLI for certain actions (like database setup). You can explore available commands:
-
-```bash
-python -m app.cli --help
